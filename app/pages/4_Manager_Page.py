@@ -213,6 +213,43 @@ if route_desc:
             }]
         }
 
+        # ========== New: Delay Rate by Carrier Mode (Stacked Bar) ==========
+        delay_by_mode = None
+        option_mode = None
+        if 'carrier_mode' in filtered_data.columns:
+            # Group by quarter and carrier_mode
+            delay_by_mode = filtered_data.groupby(['quarter', 'carrier_mode']).agg(
+                delay_rate=('is_delay', 'mean'),
+                order_count=('is_delay', 'count')
+            ).reset_index()
+            delay_by_mode['delay_rate'] = (delay_by_mode['delay_rate'] * 100).round(2)
+            # Pivot for ECharts
+            mode_list = delay_by_mode['carrier_mode'].unique().tolist()
+            quarter_list = delay_by_quarter['quarter'].tolist()
+            series = []
+            for mode in mode_list:
+                mode_data = [
+                    float(delay_by_mode[(delay_by_mode['quarter'] == q) & (delay_by_mode['carrier_mode'] == mode)]['delay_rate'].values[0])
+                    if ((delay_by_mode['quarter'] == q) & (delay_by_mode['carrier_mode'] == mode)).any() else 0
+                    for q in quarter_list
+                ]
+                series.append({
+                    "name": mode,
+                    "type": "bar",
+                    "stack": "total",
+                    "label": {"show": True, "position": "top", "formatter": "{c}%"},
+                    "data": mode_data
+                })
+            option_mode = {
+                "title": {"text": "Delay Rate by Carrier Mode (Quarterly)", "left": "center"},
+                "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+                "legend": {"data": mode_list, "top": 30},
+                "xAxis": {"type": "category", "data": quarter_list},
+                "yAxis": {"type": "value", "min": 0, "max": 100, "name": "Delay Rate (%)"},
+                "series": series
+            }
+        # ========== END Delay Rate by Carrier Mode ==========
+
         # ECharts config for scatter plot
         scatter_data = [
             {
@@ -267,16 +304,25 @@ if route_desc:
             ]
         }
 
-        # Toggle between bar and scatter
+        # Toggle between bar, scatter, and carrier mode charts
         chart_type = st.radio(
             "Select chart type:",
-            ["Bar Chart (Delay Rate by Quarter)", "Scatter Plot (Delay Rate vs Order Count)"],
+            [
+                "Bar Chart (Delay Rate by Quarter)",
+                "Scatter Plot (Delay Rate vs Order Count)",
+                "Delay Rate by Carrier Mode (Quarterly)"
+            ],
             horizontal=True
         )
         if chart_type == "Bar Chart (Delay Rate by Quarter)":
             st_echarts(options=option_delay, height="400px")
-        else:
+        elif chart_type == "Scatter Plot (Delay Rate vs Order Count)":
             st_echarts(options=scatter_option, height="500px")
+        elif chart_type == "Delay Rate by Carrier Mode (Quarterly)":
+            if option_mode:
+                st_echarts(options=option_mode, height="500px")
+            else:
+                st.info("No carrier mode data available for this filter.")
     else:
         st.warning("Data missing otd_designation or actual_delivery fields, cannot calculate delay rate.")
     # ========== END ==========
@@ -335,7 +381,7 @@ if route_desc:
     # ========== END Key Performance Metrics ==========
 # ========== Key Factors from Historical Records ==========
 st.markdown("---")
-st.markdown("### 🗝️ Key Factors in Historical Records")
+st.markdown("### 🗝️ Possible Factors in Historical Records")
 # Use last 1 year for history, fallback to all if too few
 history_data = filter_last_n_years(filtered_data, years=1)
 if len(history_data) < 50:
@@ -372,7 +418,6 @@ def get_key_factor(row):
 if 'actual_transit_days' in history_data.columns and 'customer_distance' in history_data.columns:
     history_data = history_data.copy()
     history_data['Key Factor'] = history_data.apply(get_key_factor, axis=1)
-    # Show donut chart for key factors
     from collections import Counter
     key_factors = history_data['Key Factor'].dropna().astype(str).tolist()
     factor_counts = Counter(key_factors)
@@ -403,37 +448,39 @@ if 'actual_transit_days' in history_data.columns and 'customer_distance' in hist
                 }
             ]
         }
-        st_echarts(options=donut_option, height="400px")
-        st.caption("Donut chart of key factors for filtered shipments")
+        # --- Layout: Donut chart left, comments right ---
+        donut_col, comment_col = st.columns([1.2, 1])
+        with donut_col:
+            st_echarts(options=donut_option, height="400px")
+            st.caption("Donut chart of key factors for filtered shipments")
+        with comment_col:
+            # Show filter combination above comment box
+            filter_label = f"Filter: Origin={selected_origin}, Dest={selected_dest}, Lane={selected_lane_id}, Distance={selected_distance}"
+            st.markdown(f"<div style='font-size:0.95rem;color:#888;margin-bottom:0.5rem'><b>{filter_label}</b></div>", unsafe_allow_html=True)
+            # Comment system (scoped to filter)
+            def get_filter_key():
+                return f"comments_{str(selected_origin)}_{str(selected_dest)}_{str(selected_lane_id)}_{str(selected_distance)}"
+            key_factor_filter_id = get_filter_key()
+            if key_factor_filter_id not in st.session_state:
+                st.session_state[key_factor_filter_id] = []
+            with st.form(f"comment_form_{key_factor_filter_id}", clear_on_submit=True):
+                comment_input = st.text_area("Write your comment about the key factors:", max_chars=300)
+                submitted = st.form_submit_button("Submit Comment")
+                if submitted and comment_input.strip():
+                    st.session_state[key_factor_filter_id].append({
+                        'text': comment_input.strip(),
+                        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                    st.success("Comment submitted!")
+            if st.session_state[key_factor_filter_id]:
+                st.markdown("#### 📝 All Comments for Key Factors:")
+                for c in reversed(st.session_state[key_factor_filter_id]):
+                    st.markdown(f"- {c['text']}  ")
+                    st.caption(f"🕒 {c['time']}")
+            else:
+                st.info("No comments yet for these key factors, be the first to share your thoughts!")
     else:
         st.info("No key factor data available for this filter.")
 else:
     st.info("Not enough data to extract key factors.")
 # ========== END Key Factors ==========
-
-# ========== Human Note (Comments Section) for Key Factors ==========
-st.markdown("---")
-st.markdown("### 💬 Human Note for Key Factors")
-# Use a unique session key for comments per key factor filter
-key_factor_filter_id = f"comments_{selected_origin}_{selected_dest}_{selected_lane_id}_{selected_distance}"
-if key_factor_filter_id not in st.session_state:
-    st.session_state[key_factor_filter_id] = []
-
-with st.form(f"comment_form_{key_factor_filter_id}", clear_on_submit=True):
-    comment_input = st.text_area("Write your comment about the key factors:", max_chars=300)
-    submitted = st.form_submit_button("Submit Comment")
-    if submitted and comment_input.strip():
-        st.session_state[key_factor_filter_id].append({
-            'text': comment_input.strip(),
-            'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        })
-        st.success("Comment submitted!")
-
-if st.session_state[key_factor_filter_id]:
-    st.markdown("#### 📝 All Comments for Key Factors:")
-    for c in reversed(st.session_state[key_factor_filter_id]):
-        st.markdown(f"- {c['text']}  ")
-        st.caption(f"🕒 {c['time']}")
-else:
-    st.info("No comments yet for these key factors, be the first to share your thoughts!")
-# ========== END Human Note for Key Factors ==========
