@@ -108,17 +108,18 @@ Open http://localhost:8501 in your browser.
 - Click lanes to see detailed metrics
 
 ### 2. ETA Simulator ⚡
-**Dynamic cascading filters:**
+**Dynamic cascading filters by state:**
 ```
-📍 Origin ZIP3  →  📍 Dest ZIP3  →  📏 Distance Bucket
-     [441]      →      [172]     →     [250-500mi]
+📍 Origin State  →  📍 Dest State  →  📏 Distance Bucket
+      [OH]       →       [PA]      →     [250-500mi]
 ```
 
-- Select any combination of origin, destination, and distance
+- Select any combination of origin state, destination state, and distance
 - See all viable carrier options ranked by predicted ETA
 - Status indicators: 🟢 On-time | 🟡 Risk | 🔴 Late
 - 🏆 Best option highlighted
 - Confidence scores based on sample size and variance
+- View route details including ZIP3 codes within each state
 
 ### 3. Model Explainer 📊
 - **Permutation Importance**: See which features matter most
@@ -156,8 +157,16 @@ actual_transit_hours = (actual_delivery - actual_ship).total_seconds() / 3600
 | Temporal | `is_holiday`, `season`, `ship_day_of_week`, `is_month_end` |
 | Carrier | `carrier_total_shipments`, `carrier_avg_transit_days`, `carrier_on_time_rate` |
 | Lane | `lane_total_shipments`, `lane_avg_transit_days`, `lane_on_time_rate` |
-| Route | `route_key`, `route_avg_transit_days`, `route_on_time_rate` |
+| State Route | `lane_state_pair`, `state_route_avg_transit_days`, `state_route_on_time_rate` |
+| Granular Route | `lane_state_pair_distance_bucket`, `granular_route_avg_transit_days` |
 | Distance | `customer_distance`, `distance_log`, `distance_sqrt` |
+
+### State-Based Routing
+Routes are identified by state pairs (e.g., `OH_PA` = Ohio → Pennsylvania):
+- **`lane_state_pair`**: Broad route (state to state)
+- **`lane_state_pair_distance_bucket`**: Granular route (state pair + distance band)
+
+State codes are derived from 3-digit ZIP prefixes using the `pgeocode` library.
 
 ### Model
 - **Algorithm**: XGBoost Regressor
