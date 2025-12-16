@@ -1,0 +1,28 @@
+# Core dependencies
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+shap>=0.42.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.18.0
+
+# Map visualization
+folium>=0.14.0
+streamlit-folium>=0.15.0
+
+# Date handling
+holidays>=0.37
+
+# ZIP code lookup
+pgeocode>=0.4.0
+
+# Optional: for faster data processing
+# pyarrow>=14.0.0
+

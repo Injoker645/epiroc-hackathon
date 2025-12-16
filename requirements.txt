@@ -1,0 +1,35 @@
+# Requirements for Epiroc ETA Optimization Project
+# Install with: pip install -r requirements.txt
+
+# Core data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning
+xgboost>=2.0.0
+scikit-learn>=1.3.0
+shap>=0.42.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Date/time handling
+holidays>=0.37
+
+# Jupyter notebooks
+jupyter>=1.0.0
+notebook>=7.0.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# ZIP code lookup
+pgeocode>=0.4.0
+
+# Dashboard app (optional - see app/requirements.txt for full list)
+streamlit>=1.28.0
+plotly>=5.18.0
+folium>=0.14.0
+streamlit-folium>=0.15.0
+

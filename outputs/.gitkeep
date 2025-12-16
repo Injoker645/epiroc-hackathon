@@ -1,0 +1,8 @@
+# Generated outputs directory
+# 
+# Subdirectories:
+#   - data/    : Processed features (from ETL_Notebook)
+#   - models/  : Trained models (from Model_Notebook)
+#   - graphs/  : Visualization outputs
+#
+# All contents are gitignored - regenerate by running notebooks

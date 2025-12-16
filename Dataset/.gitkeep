@@ -1,0 +1,10 @@
+# Place your data files here
+# 
+# Required:
+#   - last-mile-data.csv (main dataset)
+#
+# Optional:
+#   - last-mile-column-descriptions.pdf
+#   - sla.pdf
+#
+# Note: All CSV files in this folder are gitignored
