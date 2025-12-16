@@ -277,15 +277,18 @@ def format_duration(hours):
         return f"{days} days {remaining_hours} hours"
 
 
-def generate_carrier_recommendations(lane_id, ship_datetime, model, raw_data,
-                                      feature_columns, goal_days=None):
+def generate_carrier_recommendations(lane_state_pair=None, lane_id=None, ship_datetime=None, 
+                                      model=None, raw_data=None, feature_columns=None, 
+                                      goal_days=None):
     """
-    Generate carrier recommendations for a lane.
+    Generate carrier recommendations for a route.
     
     Parameters:
     -----------
-    lane_id : str
-        Lane identifier
+    lane_state_pair : str
+        State-based route identifier (e.g., 'OH_PA')
+    lane_id : str (deprecated)
+        Legacy lane identifier, used if lane_state_pair not provided
     ship_datetime : datetime
         Ship datetime
     model : trained model
@@ -302,45 +305,42 @@ def generate_carrier_recommendations(lane_id, ship_datetime, model, raw_data,
     list[dict]
         List of carrier recommendations sorted by ETA
     """
-    # Get all carrier/mode combos that have operated on this lane
-    lane_data = raw_data[raw_data['lane_id'] == lane_id]
+    if raw_data is None:
+        return []
     
-    if len(lane_data) == 0:
+    # Filter data by route
+    if lane_state_pair is not None and 'lane_state_pair' in raw_data.columns:
+        route_data = raw_data[raw_data['lane_state_pair'] == lane_state_pair]
+    elif lane_id is not None:
+        route_data = raw_data[raw_data['lane_id'] == lane_id]
+    else:
+        return []
+    
+    if len(route_data) == 0:
         return []
     
     # Get unique carrier/mode combinations
-    combos = lane_data[['carrier_pseudo', 'carrier_mode']].drop_duplicates()
+    combos = route_data[['carrier_pseudo', 'carrier_mode']].drop_duplicates()
     
     results = []
     for _, row in combos.iterrows():
         carrier = row['carrier_pseudo']
         mode = row['carrier_mode']
         
-        # Get historical performance for this carrier/mode on this lane
-        carrier_lane_data = lane_data[
-            (lane_data['carrier_pseudo'] == carrier) & 
-            (lane_data['carrier_mode'] == mode)
+        # Get historical performance for this carrier/mode on this route
+        carrier_route_data = route_data[
+            (route_data['carrier_pseudo'] == carrier) & 
+            (route_data['carrier_mode'] == mode)
         ]
         
-        # Build features
-        features = build_prediction_features(
-            lane_id=lane_id,
-            carrier=carrier,
-            mode=mode,
-            ship_datetime=ship_datetime,
-            raw_data=raw_data,
-            feature_columns=feature_columns
-        )
-        
-        # For now, use historical average as prediction
-        # In production, this would use the model with proper feature alignment
-        avg_hours = carrier_lane_data['transit_hours'].mean() if 'transit_hours' in carrier_lane_data.columns else \
-                    carrier_lane_data['actual_transit_days'].mean() * 24
-        std_hours = carrier_lane_data['transit_hours'].std() if 'transit_hours' in carrier_lane_data.columns else \
-                    carrier_lane_data['actual_transit_days'].std() * 24
+        # Use historical average as prediction
+        avg_hours = carrier_route_data['transit_hours'].mean() if 'transit_hours' in carrier_route_data.columns else \
+                    carrier_route_data['actual_transit_days'].mean() * 24
+        std_hours = carrier_route_data['transit_hours'].std() if 'transit_hours' in carrier_route_data.columns else \
+                    carrier_route_data['actual_transit_days'].std() * 24
         
         # Calculate confidence based on sample size and variance
-        n_samples = len(carrier_lane_data)
+        n_samples = len(carrier_route_data)
         variance_factor = min(std_hours / (avg_hours + 1), 1) if pd.notna(std_hours) else 0.5
         sample_factor = min(n_samples / 100, 1)  # More samples = higher confidence
         
@@ -351,8 +351,8 @@ def generate_carrier_recommendations(lane_id, ship_datetime, model, raw_data,
         status = classify_prediction_status(avg_hours, goal_days)
         
         # Calculate on-time rate
-        on_time_rate = (carrier_lane_data['otd_designation'] == 'On Time').mean() \
-                       if 'otd_designation' in carrier_lane_data.columns else 0.5
+        on_time_rate = (carrier_route_data['otd_designation'] == 'On Time').mean() \
+                       if 'otd_designation' in carrier_route_data.columns else 0.5
         
         results.append({
             'carrier': carrier,

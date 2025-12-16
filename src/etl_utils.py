@@ -12,6 +12,110 @@ import holidays
 import warnings
 warnings.filterwarnings('ignore')
 
+# ============================================================================
+# ZIP CODE TO STATE MAPPING
+# ============================================================================
+
+# Cache for ZIP3 to state lookups
+_ZIP3_STATE_CACHE = {}
+_PGEOCODE_NOMI = None
+
+
+def _get_pgeocode_nomi():
+    """Get or create the pgeocode Nominatim instance."""
+    global _PGEOCODE_NOMI
+    if _PGEOCODE_NOMI is None:
+        try:
+            import pgeocode
+            _PGEOCODE_NOMI = pgeocode.Nominatim('us')
+        except ImportError:
+            print("Warning: pgeocode not installed. Run: pip install pgeocode")
+            return None
+    return _PGEOCODE_NOMI
+
+
+def zip3_to_state(zip3_prefix):
+    """
+    Convert a 3-digit ZIP code prefix to a state code using pgeocode.
+    
+    Parameters:
+    -----------
+    zip3_prefix : str or int
+        3-digit ZIP code prefix (e.g., '100', '441', 100, 441)
+        
+    Returns:
+    --------
+    str
+        State abbreviation (e.g., 'NY', 'OH') or 'XX' if not found
+    """
+    global _ZIP3_STATE_CACHE
+    
+    # Normalize input
+    zip3 = str(zip3_prefix).zfill(3)[:3]
+    
+    # Check cache first
+    if zip3 in _ZIP3_STATE_CACHE:
+        return _ZIP3_STATE_CACHE[zip3]
+    
+    # Try pgeocode lookup
+    nomi = _get_pgeocode_nomi()
+    if nomi is not None:
+        try:
+            df = nomi._data
+            filtered = df[df['postal_code'].astype(str).str.zfill(5).str.startswith(zip3)]
+            
+            if len(filtered) > 0 and 'state_code' in filtered.columns:
+                # Get most common state
+                state = filtered['state_code'].mode().iloc[0]
+                _ZIP3_STATE_CACHE[zip3] = state
+                return state
+        except Exception:
+            pass
+    
+    # Fallback: return 'XX' for unknown
+    _ZIP3_STATE_CACHE[zip3] = 'XX'
+    return 'XX'
+
+
+def batch_zip3_to_state(zip3_series):
+    """
+    Convert a pandas Series of ZIP3 codes to state codes efficiently.
+    
+    Parameters:
+    -----------
+    zip3_series : pd.Series
+        Series of 3-digit ZIP code prefixes
+        
+    Returns:
+    --------
+    pd.Series
+        Series of state abbreviations
+    """
+    # Get unique ZIP3s
+    unique_zip3s = zip3_series.dropna().astype(str).str.zfill(3).str[:3].unique()
+    
+    print(f"  Looking up states for {len(unique_zip3s)} unique ZIP3 codes...")
+    
+    # Batch lookup
+    nomi = _get_pgeocode_nomi()
+    if nomi is not None:
+        df = nomi._data
+        
+        for zip3 in unique_zip3s:
+            if zip3 not in _ZIP3_STATE_CACHE:
+                try:
+                    filtered = df[df['postal_code'].astype(str).str.zfill(5).str.startswith(zip3)]
+                    if len(filtered) > 0 and 'state_code' in filtered.columns:
+                        state = filtered['state_code'].mode().iloc[0]
+                        _ZIP3_STATE_CACHE[zip3] = state
+                    else:
+                        _ZIP3_STATE_CACHE[zip3] = 'XX'
+                except Exception:
+                    _ZIP3_STATE_CACHE[zip3] = 'XX'
+    
+    # Apply mapping
+    return zip3_series.astype(str).str.zfill(3).str[:3].map(_ZIP3_STATE_CACHE).fillna('XX')
+
 
 # ============================================================================
 # DATA LOADING & CLEANING
@@ -63,7 +167,7 @@ def sanitize_numeric_columns(df):
 
 def load_data(filepath):
     """
-    Load CSV data with proper date parsing and numeric sanitization.
+    Load CSV data with proper date parsing, numeric sanitization, and state lookups.
     
     Parameters:
     -----------
@@ -73,9 +177,26 @@ def load_data(filepath):
     Returns:
     --------
     pd.DataFrame
-        Loaded dataframe with date columns parsed and numeric columns sanitized
+        Loaded dataframe with:
+        - Date columns parsed
+        - Numeric columns sanitized
+        - lane_id preserved as string (avoid scientific notation parsing)
+        - origin_state and dest_state derived from ZIP codes
+        - lane_state_pair created (e.g., 'OH_PA')
     """
-    df = pd.read_csv(filepath)
+    # Read CSV with specific dtypes to prevent parsing issues
+    # lane_id and ZIP columns should be strings to avoid scientific notation issues
+    dtype_overrides = {
+        'lane_id': str,
+        'load_id_pseudo': str,
+        'carrier_pseudo': str,
+        'origin_zip': str,
+        'dest_zip': str,
+        'origin_zip_3d': str,
+        'dest_zip_3d': str,
+    }
+    
+    df = pd.read_csv(filepath, dtype=dtype_overrides)
     
     # Convert date columns
     df['actual_ship'] = pd.to_datetime(df['actual_ship'])
@@ -83,6 +204,29 @@ def load_data(filepath):
     
     # Sanitize any numeric columns that might have odd formats
     df = sanitize_numeric_columns(df)
+    
+    # Ensure ZIP3 columns are properly formatted (3 digits, zero-padded)
+    if 'origin_zip_3d' in df.columns:
+        df['origin_zip_3d'] = df['origin_zip_3d'].astype(str).str.zfill(3).str[:3]
+    elif 'origin_zip' in df.columns:
+        df['origin_zip_3d'] = df['origin_zip'].astype(str).str.zfill(5).str[:3]
+    
+    if 'dest_zip_3d' in df.columns:
+        df['dest_zip_3d'] = df['dest_zip_3d'].astype(str).str.zfill(3).str[:3]
+    elif 'dest_zip' in df.columns:
+        df['dest_zip_3d'] = df['dest_zip'].astype(str).str.zfill(5).str[:3]
+    
+    # Convert ZIP3 to state codes
+    print("Converting ZIP codes to state codes...")
+    if 'origin_zip_3d' in df.columns:
+        df['origin_state'] = batch_zip3_to_state(df['origin_zip_3d'])
+    if 'dest_zip_3d' in df.columns:
+        df['dest_state'] = batch_zip3_to_state(df['dest_zip_3d'])
+    
+    # Create lane_state_pair (e.g., 'OH_PA')
+    if 'origin_state' in df.columns and 'dest_state' in df.columns:
+        df['lane_state_pair'] = df['origin_state'] + '_' + df['dest_state']
+        print(f"  Created lane_state_pair with {df['lane_state_pair'].nunique()} unique routes")
     
     return df
 
@@ -366,18 +510,18 @@ def create_lane_features(df):
 
 def create_distance_features(df):
     """
-    Create distance-based features.
+    Create distance-based features and route identifiers.
     
     Features created:
     - distance_squared (non-linear feature)
     - distance_log (log transformation)
     - distance_sqrt (square root transformation)
-    - route_key (origin_zip_3d + dest_zip_3d + distance_bucket for ETA simulator)
+    - lane_state_pair_distance_bucket (state pair + distance bucket, most granular route)
     
     Parameters:
     -----------
     df : pd.DataFrame
-        Input dataframe
+        Input dataframe with origin_state, dest_state, lane_state_pair columns
         
     Returns:
     --------
@@ -395,42 +539,40 @@ def create_distance_features(df):
     if 'distance_bucket' in df.columns:
         df['distance_bucket'] = df['distance_bucket'].astype('category')
     
-    # Create route_key for ETA simulator (origin_zip3 + dest_zip3 + distance_bucket)
-    # This allows filtering by: 1) Origin zip3, 2) Destination zip3, 3) Distance bucket
-    if all(col in df.columns for col in ['origin_zip_3d', 'dest_zip_3d', 'distance_bucket']):
-        df['route_key'] = (
-            df['origin_zip_3d'].astype(str) + '_' + 
-            df['dest_zip_3d'].astype(str) + '_' + 
+    # Create state-based route identifiers
+    # lane_state_pair is created in load_data (e.g., 'OH_PA')
+    
+    # Create lane_state_pair_distance_bucket (most granular route)
+    # e.g., 'OH_PA_250-500mi'
+    if 'lane_state_pair' in df.columns and 'distance_bucket' in df.columns:
+        df['lane_state_pair_distance_bucket'] = (
+            df['lane_state_pair'].astype(str) + '_' + 
             df['distance_bucket'].astype(str)
         )
-        
-        # Also create a lane_zip3_pair without distance for broader matching
-        df['lane_zip3_pair'] = (
-            df['origin_zip_3d'].astype(str) + '_' + 
-            df['dest_zip_3d'].astype(str)
-        )
+        print(f"  Created lane_state_pair_distance_bucket with {df['lane_state_pair_distance_bucket'].nunique()} unique granular routes")
     
     return df
 
 
 def create_route_features(df):
     """
-    Create route-level features (based on route_key = origin_zip3 + dest_zip3 + distance_bucket).
+    Create route-level features based on state pairs.
     
-    This is designed for the ETA simulator where users select:
-    - Origin ZIP3
-    - Destination ZIP3
-    - Distance bucket
+    Creates features for two levels of granularity:
+    1. lane_state_pair (e.g., 'OH_PA') - broad route
+    2. lane_state_pair_distance_bucket (e.g., 'OH_PA_250-500mi') - granular route
     
     Features created (using expanding window - only past data):
-    - route_total_shipments (historical count)
-    - route_avg_transit_days (historical average)
-    - route_on_time_rate (historical rate)
+    - state_route_total_shipments (historical count for state pair)
+    - state_route_avg_transit_days (historical average for state pair)
+    - state_route_on_time_rate (historical rate for state pair)
+    - granular_route_total_shipments (historical count for state pair + distance)
+    - granular_route_avg_transit_days (historical average for state pair + distance)
     
     Parameters:
     -----------
     df : pd.DataFrame
-        Input dataframe with route_key column
+        Input dataframe with lane_state_pair and lane_state_pair_distance_bucket columns
         
     Returns:
     --------
@@ -439,41 +581,54 @@ def create_route_features(df):
     """
     df = df.copy()
     
-    if 'route_key' not in df.columns:
-        print("  Warning: route_key not found, skipping route features")
-        return df
-    
     # Sort by date
     df = df.sort_values('actual_ship').reset_index(drop=True)
     
-    print("  Calculating route features with temporal safety (no data leakage)...")
-    
-    route_groups = df.groupby('route_key', group_keys=False)
-    
-    # Historical count
-    df['route_total_shipments'] = route_groups.cumcount()
-    
-    # Historical averages
-    df['route_avg_transit_days'] = route_groups['actual_transit_days'].transform(
-        lambda x: x.expanding(min_periods=1).mean().shift(1)
-    )
-    
-    # Historical on-time rate
-    if 'otd_designation' in df.columns:
-        df['_is_on_time'] = (df['otd_designation'] == 'On Time').astype(int)
+    # Features for lane_state_pair (broad route: state to state)
+    if 'lane_state_pair' in df.columns:
+        print("  Calculating state route features (lane_state_pair)...")
         
-        df['route_on_time_rate'] = route_groups['_is_on_time'].transform(
+        state_groups = df.groupby('lane_state_pair', group_keys=False)
+        
+        df['state_route_total_shipments'] = state_groups.cumcount()
+        
+        df['state_route_avg_transit_days'] = state_groups['actual_transit_days'].transform(
             lambda x: x.expanding(min_periods=1).mean().shift(1)
         )
         
-        df = df.drop(columns=['_is_on_time'])
+        if 'otd_designation' in df.columns:
+            df['_is_on_time'] = (df['otd_designation'] == 'On Time').astype(int)
+            df['state_route_on_time_rate'] = state_groups['_is_on_time'].transform(
+                lambda x: x.expanding(min_periods=1).mean().shift(1)
+            )
+            df = df.drop(columns=['_is_on_time'])
+        else:
+            df['state_route_on_time_rate'] = np.nan
+        
+        # Fill NaN values
+        df['state_route_total_shipments'] = df['state_route_total_shipments'].fillna(0)
+        df['state_route_avg_transit_days'] = df['state_route_avg_transit_days'].fillna(df['actual_transit_days'].mean())
+        df['state_route_on_time_rate'] = df['state_route_on_time_rate'].fillna(0)
     else:
-        df['route_on_time_rate'] = np.nan
+        print("  Warning: lane_state_pair not found, skipping state route features")
     
-    # Fill NaN values
-    df['route_total_shipments'] = df['route_total_shipments'].fillna(0)
-    df['route_avg_transit_days'] = df['route_avg_transit_days'].fillna(df['actual_transit_days'].mean())
-    df['route_on_time_rate'] = df['route_on_time_rate'].fillna(0)
+    # Features for lane_state_pair_distance_bucket (granular route)
+    if 'lane_state_pair_distance_bucket' in df.columns:
+        print("  Calculating granular route features (lane_state_pair_distance_bucket)...")
+        
+        granular_groups = df.groupby('lane_state_pair_distance_bucket', group_keys=False)
+        
+        df['granular_route_total_shipments'] = granular_groups.cumcount()
+        
+        df['granular_route_avg_transit_days'] = granular_groups['actual_transit_days'].transform(
+            lambda x: x.expanding(min_periods=1).mean().shift(1)
+        )
+        
+        # Fill NaN values
+        df['granular_route_total_shipments'] = df['granular_route_total_shipments'].fillna(0)
+        df['granular_route_avg_transit_days'] = df['granular_route_avg_transit_days'].fillna(df['actual_transit_days'].mean())
+    else:
+        print("  Warning: lane_state_pair_distance_bucket not found, skipping granular route features")
     
     return df
 
