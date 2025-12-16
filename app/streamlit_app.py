@@ -27,7 +27,6 @@ st.set_page_config(
 # Custom CSS for styling
 st.markdown("""
 <style>
-    /* Main theme colors */
     :root {
         --primary-color: #667eea;
         --secondary-color: #764ba2;
@@ -35,7 +34,6 @@ st.markdown("""
         --warning-color: #fbbc04;
         --danger-color: #ea4335;
     }
-    
     /* Header styling */
     .main-header {
         font-size: 3rem;
@@ -45,42 +43,45 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         margin-bottom: 0.5rem;
     }
-    
     .sub-header {
         font-size: 1.2rem;
         color: #8b949e;
         margin-bottom: 2rem;
     }
-    
-    /* YoY badges */
-    .yoy-up {
-        color: #34a853;
-        font-weight: 600;
+    .yoy-up { color: #34a853; font-weight: 600; }
+    .yoy-down { color: #ea4335; font-weight: 600; }
+    .yoy-neutral { color: #8b949e; }
+    /* Feature cards: light/dark mode adaptive */
+    @media (prefers-color-scheme: dark) {
+        .feature-card {
+            background: linear-gradient(145deg, #1e2329 0%, #262c33 100%);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid #30363d;
+            margin-bottom: 1rem;
+            transition: transform 0.2s, border-color 0.2s;
+            color: #e6e6e6;
+        }
+        .feature-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+        }
     }
-    .yoy-down {
-        color: #ea4335;
-        font-weight: 600;
+    @media (prefers-color-scheme: light) {
+        .feature-card {
+            background: linear-gradient(145deg, #f7f7fa 0%, #e6eaf5 100%);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid #d0d6e0;
+            margin-bottom: 1rem;
+            transition: transform 0.2s, border-color 0.2s;
+            color: #222;
+        }
+        .feature-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+        }
     }
-    .yoy-neutral {
-        color: #8b949e;
-    }
-    
-    /* Feature cards */
-    .feature-card {
-        background: linear-gradient(145deg, #1e2329 0%, #262c33 100%);
-        border-radius: 12px;
-        padding: 1.5rem;
-        border: 1px solid #30363d;
-        margin-bottom: 1rem;
-        transition: transform 0.2s, border-color 0.2s;
-    }
-    
-    .feature-card:hover {
-        border-color: #667eea;
-        transform: translateY(-2px);
-    }
-    
-    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -232,28 +233,25 @@ def main():
             st.metric("Total (All Time)", f"{total_all_time:,}")
         
         # Charts
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        
+        # st.markdown("---")
+        # col1, col2 = st.columns(2)
         # Use last year's data for charts
-        recent_data = filter_last_n_years(filtered_data, years=1)
-        
-        with col1:
-            st.markdown("#### OTD Distribution (Last 12 Months)")
-            if len(recent_data) > 0:
-                otd_counts = recent_data['otd_designation'].value_counts()
-                st.bar_chart(otd_counts)
-            else:
-                st.info("No data for selected filters")
-        
-        with col2:
-            st.markdown("#### Transit Days Distribution (Last 12 Months)")
-            if len(recent_data) > 0:
-                transit_hist = recent_data['actual_transit_days'].value_counts().sort_index().head(15)
-                st.bar_chart(transit_hist)
-            else:
-                st.info("No data for selected filters")
-        
+        # recent_data = filter_last_n_years(filtered_data, years=1)
+        # with col1:
+        #     st.markdown("#### OTD Distribution (Last 12 Months)")
+        #     if len(recent_data) > 0:
+        #         otd_counts = recent_data['otd_designation'].value_counts()
+        #         st.bar_chart(otd_counts)
+        #     else:
+        #         st.info("No data for selected filters")
+        # with col2:
+        #     st.markdown("#### Transit Days Distribution (Last 12 Months)")
+        #     if len(recent_data) > 0:
+        #         transit_hist = recent_data['actual_transit_days'].value_counts().sort_index().head(15)
+        #         st.bar_chart(transit_hist)
+        #     else:
+        #         st.info("No data for selected filters")
+
         # Top/Bottom Routes with YoY
         st.markdown("---")
         
@@ -273,27 +271,44 @@ def main():
         with col1:
             st.markdown("#### 🏆 Top Performing Routes (Last 12 Months)")
             if len(filtered_lane_stats) > 0:
-                top_routes = filtered_lane_stats.nlargest(10, 'on_time_rate')[
-                    ['lane_state_pair', 'on_time_rate', 'total_shipments', 'avg_transit_days']
+                filtered_lane_stats['delay_rate'] = 1 - filtered_lane_stats['on_time_rate']
+                top_routes = filtered_lane_stats.nsmallest(10, 'delay_rate')[
+                    ['lane_state_pair', 'delay_rate', 'total_shipments', 'avg_transit_days']
                 ].copy()
-                top_routes['on_time_rate'] = (top_routes['on_time_rate'] * 100).round(1).astype(str) + '%'
+                top_routes['delay_rate'] = (top_routes['delay_rate'] * 100).round(1).astype(str) + '%'
                 top_routes['avg_transit_days'] = top_routes['avg_transit_days'].round(1)
-                top_routes.columns = ['Route', 'On-Time %', 'Shipments', 'Avg Days']
-                st.dataframe(top_routes, hide_index=True, use_container_width=True)
+                top_routes.columns = ['Route', 'Delay %', 'Shipments', 'Avg Days']
+                # 跳转链接到Manager Page（Streamlit多页面格式）
+                def make_route_link(route):
+                    if '_' in route:
+                        origin, dest = route.split('_')
+                        # Streamlit多页面跳转格式
+                        return f"[**{route}**](/Manager_Page?origin_state={origin}&dest_state={dest})"
+                    return route
+                top_routes['Route'] = top_routes['Route'].apply(make_route_link)
+                st.markdown(top_routes.to_markdown(index=False), unsafe_allow_html=True)
             else:
                 st.info("No routes for selected filters")
         
         with col2:
             st.markdown("#### ⚠️ Routes Needing Attention")
             if len(filtered_lane_stats) > 0:
-                bottom_routes = filtered_lane_stats[filtered_lane_stats['total_shipments'] >= 5].nsmallest(10, 'on_time_rate')[
-                    ['lane_state_pair', 'on_time_rate', 'total_shipments', 'avg_transit_days']
+                filtered_lane_stats['delay_rate'] = 1 - filtered_lane_stats['on_time_rate']
+                # 只考虑发货量>=100的路线
+                bottom_routes = filtered_lane_stats[filtered_lane_stats['total_shipments'] >= 100].nlargest(10, 'delay_rate')[
+                    ['lane_state_pair', 'delay_rate', 'total_shipments', 'avg_transit_days']
                 ].copy()
                 if len(bottom_routes) > 0:
-                    bottom_routes['on_time_rate'] = (bottom_routes['on_time_rate'] * 100).round(1).astype(str) + '%'
+                    bottom_routes['delay_rate'] = (bottom_routes['delay_rate'] * 100).round(1).astype(str) + '%'
                     bottom_routes['avg_transit_days'] = bottom_routes['avg_transit_days'].round(1)
-                    bottom_routes.columns = ['Route', 'On-Time %', 'Shipments', 'Avg Days']
-                    st.dataframe(bottom_routes, hide_index=True, use_container_width=True)
+                    bottom_routes.columns = ['Route', 'Delay %', 'Shipments', 'Avg Days']
+                    def make_route_link(route):
+                        if '_' in route:
+                            origin, dest = route.split('_')
+                            return f"[**{route}**](/Manager_Page?origin_state={origin}&dest_state={dest})"
+                        return route
+                    bottom_routes['Route'] = bottom_routes['Route'].apply(make_route_link)
+                    st.markdown(bottom_routes.to_markdown(index=False), unsafe_allow_html=True)
                 else:
                     st.info("All routes performing well!")
             else:
