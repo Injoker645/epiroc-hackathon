@@ -162,47 +162,49 @@ def main():
         
         col1, col2, col3, col4 = st.columns(4)
         
+        from utils.yoy_utils import format_delta
+        
         with col1:
             volume_delta = yoy.get('volume_change_pct')
-            # Shipments up = green
+            delta_str, delta_color = format_delta(volume_delta, suffix='% YoY', inverse=False, decimals=1)
             st.metric(
                 "Shipments (90d)",
                 f"{yoy['current_count']:,}",
-                delta=f"{volume_delta:+.1f}% YoY" if volume_delta is not None else None,
-                delta_color="normal"  # Green when positive
+                delta=delta_str if volume_delta is not None else None,
+                delta_color=delta_color
             )
         
         with col2:
             on_time_delta = yoy.get('on_time_rate_delta')
             current_otr = yoy.get('current_on_time_rate', 0)
-            # On-time rate up = green
+            delta_str, delta_color = format_delta(on_time_delta, suffix='% YoY', inverse=False, decimals=1)
             st.metric(
                 "On-Time Rate",
                 f"{current_otr:.1f}%",
-                delta=f"{on_time_delta:+.1f}% YoY" if on_time_delta is not None else None,
-                delta_color="normal"  # Green when positive
+                delta=delta_str if on_time_delta is not None else None,
+                delta_color=delta_color
             )
         
         with col3:
             late_delta = yoy.get('late_rate_delta')
             current_late = yoy.get('current_late_rate', 0)
-            # Late rate down = green (inverse)
+            delta_str, delta_color = format_delta(late_delta, suffix='% YoY', inverse=True, decimals=1)
             st.metric(
                 "Late Rate",
                 f"{current_late:.1f}%",
-                delta=f"{late_delta:+.1f}% YoY" if late_delta is not None else None,
-                delta_color="inverse"  # Green when negative
+                delta=delta_str if late_delta is not None else None,
+                delta_color=delta_color
             )
         
         with col4:
             transit_delta = yoy.get('avg_transit_delta')
             current_transit = yoy.get('current_avg_transit', 0)
-            # Transit down = green (inverse)
+            delta_str, delta_color = format_delta(transit_delta, suffix='d YoY', inverse=True, decimals=1)
             st.metric(
                 "Avg Transit Days",
                 f"{current_transit:.1f}",
-                delta=f"{transit_delta:+.1f}d YoY" if transit_delta is not None else None,
-                delta_color="inverse"  # Green when negative (faster is better)
+                delta=delta_str if transit_delta is not None else None,
+                delta_color=delta_color
             )
         
         # Second row of metrics
@@ -219,12 +221,12 @@ def main():
         with col3:
             std_delta = yoy.get('transit_std_delta')
             current_std = yoy.get('current_transit_std', 0)
-            # Variability down = green (inverse)
+            delta_str, delta_color = format_delta(std_delta, suffix='d YoY', inverse=True, decimals=1)
             st.metric(
                 "Transit Variability",
                 f"±{current_std:.1f} days",
-                delta=f"{std_delta:+.1f}d YoY" if std_delta is not None else None,
-                delta_color="inverse"  # Green when negative (less variable is better)
+                delta=delta_str if std_delta is not None else None,
+                delta_color=delta_color
             )
         
         with col4:
