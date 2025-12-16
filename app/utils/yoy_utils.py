@@ -184,10 +184,15 @@ def format_delta(value, suffix='%', inverse=False, decimals=1):
     Returns:
     --------
     tuple
-        (formatted_string, is_positive_change)
+        (formatted_string, delta_color)
+        delta_color: "normal" (green), "inverse" (red), "off" (grey for 0)
     """
     if value is None or pd.isna(value):
-        return ("N/A", None)
+        return ("N/A", "off")
+    
+    # Check if value is effectively zero
+    if abs(value) < 0.01:  # Less than 0.01% or 0.01 days
+        return ("~", "off")  # Grey indicator for no change
     
     formatted = f"{value:+.{decimals}f}{suffix}"
     
@@ -197,7 +202,8 @@ def format_delta(value, suffix='%', inverse=False, decimals=1):
     else:
         is_good = value > 0  # Increase is good
     
-    return (formatted, is_good)
+    delta_color = "normal" if is_good else "inverse"
+    return (formatted, delta_color)
 
 
 def get_default_date_range(df=None, date_column='actual_ship', years_back=1):

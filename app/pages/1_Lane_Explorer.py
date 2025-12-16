@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.data_loader import load_raw_data, compute_lane_statistics
 from utils.map_utils import create_lane_map, add_legend_to_map
-from utils.yoy_utils import calculate_yoy_metrics, filter_last_n_years
+from utils.yoy_utils import calculate_yoy_metrics, filter_last_n_years, format_delta
 
 st.set_page_config(
     page_title="Lane Explorer",
@@ -114,45 +114,45 @@ col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     volume_delta = yoy.get('volume_change_pct')
-    # Shipments up = green
+    delta_str, delta_color = format_delta(volume_delta, suffix='% YoY', inverse=False, decimals=0)
     st.metric(
         "Shipments (90d)",
         f"{yoy['current_count']:,}",
-        delta=f"{volume_delta:+.0f}% YoY" if volume_delta is not None else None,
-        delta_color="normal"  # Green when positive
+        delta=delta_str if volume_delta is not None else None,
+        delta_color=delta_color
     )
 
 with col2:
     on_time_delta = yoy.get('on_time_rate_delta')
     current_otr = yoy.get('current_on_time_rate', 0)
-    # On-time up = green
+    delta_str, delta_color = format_delta(on_time_delta, suffix='% YoY', inverse=False, decimals=1)
     st.metric(
         "On-Time Rate",
         f"{current_otr:.0f}%",
-        delta=f"{on_time_delta:+.1f}% YoY" if on_time_delta is not None else None,
-        delta_color="normal"  # Green when positive
+        delta=delta_str if on_time_delta is not None else None,
+        delta_color=delta_color
     )
 
 with col3:
     late_delta = yoy.get('late_rate_delta')
     current_late = yoy.get('current_late_rate', 0)
-    # Late rate down = green (inverse)
+    delta_str, delta_color = format_delta(late_delta, suffix='% YoY', inverse=True, decimals=1)
     st.metric(
         "Late Rate",
         f"{current_late:.0f}%",
-        delta=f"{late_delta:+.1f}% YoY" if late_delta is not None else None,
-        delta_color="inverse"  # Green when negative
+        delta=delta_str if late_delta is not None else None,
+        delta_color=delta_color
     )
 
 with col4:
     transit_delta = yoy.get('avg_transit_delta')
     current_transit = yoy.get('current_avg_transit', 0)
-    # Transit down = green (inverse)
+    delta_str, delta_color = format_delta(transit_delta, suffix='d YoY', inverse=True, decimals=1)
     st.metric(
         "Avg Transit",
         f"{current_transit:.1f} days",
-        delta=f"{transit_delta:+.1f}d YoY" if transit_delta is not None else None,
-        delta_color="inverse"  # Green when negative (faster is better)
+        delta=delta_str if transit_delta is not None else None,
+        delta_color=delta_color
     )
 
 st.markdown("---")
