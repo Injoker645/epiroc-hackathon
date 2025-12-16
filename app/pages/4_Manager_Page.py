@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from utils.data_loader import load_raw_data
 from utils.prediction_utils import format_duration, get_status_emoji
+from utils.yoy_utils import calculate_yoy_metrics, filter_last_n_years
 
 st.set_page_config(
     page_title="Manager Page",
@@ -90,27 +91,30 @@ st.markdown("### 🔍 Select Route")
 
 col1, col2, col3, col4 = st.columns(4)
 
+# 1. Origin State
 with col1:
-    # Origin ZIP3 dropdown
-    origin_zip3_options = sorted(raw_data['origin_zip_3d'].dropna().unique().tolist())
+    origin_states = sorted(raw_data['origin_state'].dropna().unique().tolist())
     selected_origin = st.selectbox(
-        "📍 Origin ZIP3",
-        options=['All'] + origin_zip3_options,
-        help="3-digit ZIP code of origin"
+        "📍 Origin State",
+        options=['All'] + origin_states,
+        key="origin_state",
+        help="Select the origin state (abbreviation)"
     )
 
-# Filter destinations based on origin
+# Filter data for next dropdown
 if selected_origin != 'All':
-    filtered_for_dest = raw_data[raw_data['origin_zip_3d'] == selected_origin]
+    filtered_for_dest = raw_data[raw_data['origin_state'] == selected_origin]
 else:
     filtered_for_dest = raw_data
 
+# 2. Destination State (filtered by origin)
 with col2:
-    dest_zip3_options = sorted(filtered_for_dest['dest_zip_3d'].dropna().unique().tolist())
+    dest_states = sorted(filtered_for_dest['dest_state'].dropna().unique().tolist())
     selected_dest = st.selectbox(
-        "📍 Destination ZIP3",
-        options=['All'] + dest_zip3_options,
-        help="3-digit ZIP code of destination"
+        "📍 Destination State",
+        options=['All'] + dest_states,
+        key="dest_state",
+        help="Select the destination state (abbreviation)"
     )
 
 # Filter lane_id based on origin + dest
@@ -119,7 +123,7 @@ if selected_origin != 'All':
 else:
     filtered_for_lane = raw_data.copy()
 if selected_dest != 'All':
-    filtered_for_lane = filtered_for_lane[filtered_for_lane['dest_zip_3d'] == selected_dest]
+    filtered_for_lane = filtered_for_lane[filtered_for_lane['dest_state'] == selected_dest]
 
 with col3:
     lane_id_options = sorted(filtered_for_lane['lane_id'].dropna().unique().tolist()) if 'lane_id' in filtered_for_lane.columns else []
@@ -141,9 +145,9 @@ with col4:
 # Apply all filters
 filtered_data = raw_data.copy()
 if selected_origin != 'All':
-    filtered_data = filtered_data[filtered_data['origin_zip_3d'] == selected_origin]
+    filtered_data = filtered_data[filtered_data['origin_state'] == selected_origin]
 if selected_dest != 'All':
-    filtered_data = filtered_data[filtered_data['dest_zip_3d'] == selected_dest]
+    filtered_data = filtered_data[filtered_data['dest_state'] == selected_dest]
 if selected_lane_id != 'All' and 'lane_id' in filtered_data.columns:
     filtered_data = filtered_data[filtered_data['lane_id'] == selected_lane_id]
 if selected_distance != 'All':
@@ -279,26 +283,157 @@ if route_desc:
 else:
     st.info(f"🌐 All routes selected | **{len(filtered_data):,} historical shipments**")
 
-# ========== New: Comments Section ==========
-st.markdown("---")
-st.markdown("### 💬 Human Note (Comments Section)")
-if 'comments' not in st.session_state:
-    st.session_state['comments'] = []
+# ========== New: Key Performance Metrics (YoY Comparison) ==========
+if route_desc:
+    st.info(f"🛤️ Route Filter: {' → '.join(route_desc)} | **{len(filtered_data):,} historical shipments**")
+    # st.markdown("### 📋 Filtered Results")
+    # st.dataframe(filtered_data)
 
-with st.form("comment_form", clear_on_submit=True):
-    comment_input = st.text_area("Write your comment:", max_chars=300)
+    # ========== Key Performance Metrics (YoY Comparison) ==========
+    if len(filtered_data) > 0:
+        yoy = calculate_yoy_metrics(filtered_data, window_days=90)
+        periods = yoy['periods']
+        st.markdown("---")
+        st.caption(f"📅 Comparing: Last 90 days ({periods['current_start'].strftime('%b %d')} - {periods['current_end'].strftime('%b %d, %Y')}) vs Same period last year ({periods['prior_start'].strftime('%b %d')} - {periods['prior_end'].strftime('%b %d, %Y')})")
+        st.markdown("### 📊 Key Performance Metrics (YoY Comparison)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            volume_delta = yoy.get('volume_change_pct')
+            st.metric(
+                "Shipments (90d)",
+                f"{yoy['current_count']:,}",
+                delta=f"{volume_delta:+.1f}% YoY" if volume_delta is not None else None,
+                delta_color="normal"
+            )
+        with col2:
+            on_time_delta = yoy.get('on_time_rate_delta')
+            current_otr = yoy.get('current_on_time_rate', 0)
+            st.metric(
+                "On-Time Rate",
+                f"{current_otr:.1f}%",
+                delta=f"{on_time_delta:+.1f}% YoY" if on_time_delta is not None else None,
+                delta_color="normal"
+            )
+        with col3:
+            late_delta = yoy.get('late_rate_delta')
+            current_late = yoy.get('current_late_rate', 0)
+            st.metric(
+                "Late Rate",
+                f"{current_late:.1f}%",
+                delta=f"{late_delta:+.1f}% YoY" if late_delta is not None else None,
+                delta_color="inverse"
+            )
+        with col4:
+            transit_delta = yoy.get('avg_transit_delta')
+            current_transit = yoy.get('current_avg_transit', 0)
+            st.metric(
+                "Avg Transit Days",
+                f"{current_transit:.1f}",
+                delta=f"{transit_delta:+.1f}d YoY" if transit_delta is not None else None,
+                delta_color="inverse"
+            )
+    # ========== END Key Performance Metrics ==========
+# ========== Key Factors from Historical Records ==========
+st.markdown("---")
+st.markdown("### 🗝️ Key Factors in Historical Records")
+# Use last 1 year for history, fallback to all if too few
+history_data = filter_last_n_years(filtered_data, years=1)
+if len(history_data) < 50:
+    history_data = filtered_data.copy()
+# Prepare key factor column (reuse logic from ETA Simulator)
+avg_transit = history_data['actual_transit_days'].mean() if 'actual_transit_days' in history_data.columns and len(history_data) > 0 else 0
+avg_distance = history_data['customer_distance'].mean() if 'customer_distance' in history_data.columns and len(history_data) > 0 else 0
+def get_key_factor(row):
+    factors = []
+    transit = row.get('actual_transit_days', avg_transit)
+    distance = row.get('customer_distance', avg_distance)
+    if transit > avg_transit * 1.3:
+        if distance > avg_distance * 1.2:
+            factors.append(f"Long distance ({distance:.0f}mi)")
+        carrier = str(row.get('carrier_pseudo', ''))[:8]
+        if carrier:
+            factors.append(f"Carrier: {carrier}")
+        mode = row.get('carrier_mode', '')
+        if mode == 'LTL':
+            factors.append("LTL mode (slower)")
+    elif transit < avg_transit * 0.7:
+        if distance < avg_distance * 0.8:
+            factors.append(f"Short distance ({distance:.0f}mi)")
+        mode = row.get('carrier_mode', '')
+        if mode in ['TL Dry', 'TL Flatbed']:
+            factors.append(f"{mode} (direct)")
+    else:
+        if distance > avg_distance:
+            factors.append(f"Distance: {distance:.0f}mi")
+        else:
+            carrier = str(row.get('carrier_pseudo', ''))[:10]
+            factors.append(f"Carrier: {carrier}")
+    return factors[0] if factors else "Standard"
+if 'actual_transit_days' in history_data.columns and 'customer_distance' in history_data.columns:
+    history_data = history_data.copy()
+    history_data['Key Factor'] = history_data.apply(get_key_factor, axis=1)
+    # Show donut chart for key factors
+    from collections import Counter
+    key_factors = history_data['Key Factor'].dropna().astype(str).tolist()
+    factor_counts = Counter(key_factors)
+    if factor_counts:
+        top_factors = factor_counts.most_common(10)
+        other_count = sum([v for k, v in factor_counts.items() if (k, v) not in top_factors])
+        labels = [k for k, v in top_factors]
+        values = [v for k, v in top_factors]
+        if other_count > 0:
+            labels.append('Other')
+            values.append(other_count)
+        donut_option = {
+            "title": {"text": "Key Factor Distribution", "left": "center"},
+            "tooltip": {"trigger": "item", "formatter": "{b}: {c} ({d}%)"},
+            "legend": {"orient": "vertical", "left": "left", "top": "middle", "data": labels},
+            "series": [
+                {
+                    "name": "Key Factor",
+                    "type": "pie",
+                    "radius": ["50%", "80%"],
+                    "avoidLabelOverlap": False,
+                    "label": {"show": True, "position": "outside"},
+                    "emphasis": {"label": {"show": True, "fontSize": 16, "fontWeight": "bold"}},
+                    "labelLine": {"show": True},
+                    "data": [
+                        {"value": v, "name": k} for k, v in zip(labels, values)
+                    ]
+                }
+            ]
+        }
+        st_echarts(options=donut_option, height="400px")
+        st.caption("Donut chart of key factors for filtered shipments")
+    else:
+        st.info("No key factor data available for this filter.")
+else:
+    st.info("Not enough data to extract key factors.")
+# ========== END Key Factors ==========
+
+# ========== Human Note (Comments Section) for Key Factors ==========
+st.markdown("---")
+st.markdown("### 💬 Human Note for Key Factors")
+# Use a unique session key for comments per key factor filter
+key_factor_filter_id = f"comments_{selected_origin}_{selected_dest}_{selected_lane_id}_{selected_distance}"
+if key_factor_filter_id not in st.session_state:
+    st.session_state[key_factor_filter_id] = []
+
+with st.form(f"comment_form_{key_factor_filter_id}", clear_on_submit=True):
+    comment_input = st.text_area("Write your comment about the key factors:", max_chars=300)
     submitted = st.form_submit_button("Submit Comment")
     if submitted and comment_input.strip():
-        st.session_state['comments'].append({
+        st.session_state[key_factor_filter_id].append({
             'text': comment_input.strip(),
             'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
         st.success("Comment submitted!")
 
-if st.session_state['comments']:
-    st.markdown("#### 📝 All Comments:")
-    for c in reversed(st.session_state['comments']):
+if st.session_state[key_factor_filter_id]:
+    st.markdown("#### 📝 All Comments for Key Factors:")
+    for c in reversed(st.session_state[key_factor_filter_id]):
         st.markdown(f"- {c['text']}  ")
         st.caption(f"🕒 {c['time']}")
 else:
-    st.info("No comments yet, be the first to share your thoughts!")
+    st.info("No comments yet for these key factors, be the first to share your thoughts!")
+# ========== END Human Note for Key Factors ==========
